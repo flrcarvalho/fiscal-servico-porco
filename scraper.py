@@ -160,22 +160,22 @@ async def _get_bets(page, first_scan: bool = False) -> list:
             await link.click()
             await page.wait_for_timeout(2000)
 
-        # Preenche data de hoje nos filtros
-        t_full = today_full()
-        date_inputs = await page.query_selector_all('input[type="date"]')
-        if len(date_inputs) >= 1:
-            await date_inputs[0].fill(t_full)
-        if len(date_inputs) >= 2:
-            await date_inputs[1].fill(t_full)
+        # Ciclos normais: filtra por hoje. Primeiro scan: usa o que já está na tela
+        if not first_scan:
+            t_full = today_full()
+            date_inputs = await page.query_selector_all('input[type="date"]')
+            if len(date_inputs) >= 1:
+                await date_inputs[0].fill(t_full)
+            if len(date_inputs) >= 2:
+                await date_inputs[1].fill(t_full)
+            search_btn = await page.query_selector('button[type="submit"], button.btn-primary')
+            if search_btn:
+                await search_btn.click()
+                await page.wait_for_timeout(2000)
 
-        search_btn = await page.query_selector('button[type="submit"], button.btn-primary')
-        if search_btn:
-            await search_btn.click()
-            await page.wait_for_timeout(2000)
-
-        rows = await page.query_selector_all('div:has(> div:has-text("vs"))')
+        rows = await page.query_selector_all('div.row.g-0.sh-lg-15')
         if not rows:
-            rows = await page.query_selector_all('div.card, tr')
+            rows = await page.query_selector_all('div.p-card')
 
         all_bets = []
         for row in rows:
