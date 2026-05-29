@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import re
+from datetime import datetime
 from playwright.async_api import async_playwright
 
 logger = logging.getLogger(__name__)
@@ -30,13 +31,13 @@ def classify_status(text: str):
 ALERT_STATUSES  = {"robo_desligado", "saldo_insuficiente", "conta_limitada", "outros", "verificacao"}
 SILENT_STATUSES = {"feita", "odd_derretida", "valor_maximo", "mercado_suspenso"}
 
+def _today_prefix() -> str:
+    """Retorna o prefixo de hoje no formato do site: '28/05'"""
+    return datetime.now().strftime("%d/%m")
+
 
 async def scrape_license(email: str, password: str,
                          cf_clearance: str = "", r365_cookie: str = "") -> dict:
-    """
-    Acessa o site usando cookies de sessão (bypassa Cloudflare).
-    cf_clearance e r365_cookie são obrigatórios para funcionar.
-    """
     if not cf_clearance or not r365_cookie:
         return {"success": False, "error": "Cookies não configurados. Use /atualizar_cookies no bot."}
 
@@ -55,7 +56,6 @@ async def scrape_license(email: str, password: str,
             viewport={"width": 1280, "height": 800},
         )
 
-        # Injeta os cookies antes de qualquer requisição
         await context.add_cookies([
             {
                 "name": "cf_clearance",
@@ -83,7 +83,6 @@ async def scrape_license(email: str, password: str,
             await page.goto(LICENSES_URL, wait_until="domcontentloaded", timeout=30000)
             await page.wait_for_timeout(2000)
 
-            # Verifica se caiu na página de login (cookie expirado)
             if "login" in page.url:
                 await browser.close()
                 return {"success": False, "error": "Sessão expirada. Use /atualizar_cookies no bot para renovar."}
@@ -115,10 +114,9 @@ async def scrape_license(email: str, password: str,
 
 async def _get_robot_status(page) -> str:
     try:
-        badge = await page.query_selector(
-            "span:has-text('LIGADO'), span:has-text('DESLIGADO'), .badge"
-        )
-        if badge:
+        # Seletor exato: span.badge.bg-success ou span.badge.bg-danger
+        badges = await page.query_selector_all("span.badge")
+        for badge in badges:
             txt = (await badge.inner_text()).strip().upper()
             if "LIGADO" in txt:
                 return "LIGADO"
@@ -144,6 +142,8 @@ async def _get_logs(page) -> list:
 
 async def _get_bets(page) -> list:
     bets = []
+    today = _today_prefix()  # ex: "28/05"
+
     try:
         # Clica em Apostas Processadas
         link = await page.query_selector(
@@ -153,12 +153,31 @@ async def _get_bets(page) -> list:
             await link.click()
             await page.wait_for_timeout(2000)
 
+        # Muda a data de início para hoje
+        today_full = datetime.now().strftime("%Y-%m-%d")
+        date_inputs = await page.query_selector_all('input[type="date"]')
+        if len(date_inputs) >= 1:
+            await date_inputs[0].fill(today_full)
+        if len(date_inputs) >= 2:
+            await date_inputs[1].fill(today_full)
+
+        # Clica no botão de busca
+        search_btn = await page.query_selector('button[type="submit"], button.btn-primary, button:has(svg)')
+        if search_btn:
+            await search_btn.click()
+            await page.wait_for_timeout(2000)
+
         rows = await page.query_selector_all('div:has(> div:has-text("vs"))')
         if not rows:
             rows = await page.query_selector_all('div.card, tr')
 
         for row in rows:
             text = await row.inner_text()
+
+            # Filtra só apostas de hoje
+            if today not in text:
+                continue
+
             if " vs " not in text.lower():
                 continue
 
