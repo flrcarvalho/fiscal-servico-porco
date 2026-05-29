@@ -83,7 +83,7 @@ def solve_turnstile(capsolver_key: str, page_url: str, site_key: str, timeout: i
 async def do_login_with_capsolver(page, email: str, password: str, capsolver_key: str) -> bool:
     """Faz login usando CapSolver para resolver o Turnstile."""
     try:
-        await page.goto(LOGIN_URL, wait_until="domcontentloaded", timeout=30000)
+        await page.goto(LOGIN_URL, wait_until="domcontentloaded", timeout=60000)
         await page.wait_for_timeout(2000)
 
         # Pega o sitekey do Turnstile
@@ -195,7 +195,7 @@ async def scrape_license(email: str, password: str,
         try:
             # Tenta acessar direto
             target = license_url or LICENSES_URL
-            await page.goto(target, wait_until="domcontentloaded", timeout=30000)
+            await page.goto(target, wait_until="domcontentloaded", timeout=60000)
             await page.wait_for_timeout(2000)
 
             # Verifica se está logado — pela URL ou pelo conteúdo da página
@@ -222,7 +222,7 @@ async def scrape_license(email: str, password: str,
                 r365_new = next((c["value"] for c in new_cookies if c["name"] == "R365"), "")
 
                 # Vai para licenças após login
-                await page.goto(LICENSES_URL, wait_until="domcontentloaded", timeout=30000)
+                await page.goto(LICENSES_URL, wait_until="domcontentloaded", timeout=60000)
                 await page.wait_for_timeout(2000)
             else:
                 cf_new = cf_clearance
@@ -248,7 +248,7 @@ async def scrape_license(email: str, password: str,
                     new_cookies = await context.cookies()
                     cf_new   = next((c["value"] for c in new_cookies if c["name"] == "cf_clearance"), cf_new)
                     r365_new = next((c["value"] for c in new_cookies if c["name"] == "R365"), r365_new)
-                    await page.goto(LICENSES_URL, wait_until="domcontentloaded", timeout=30000)
+                    await page.goto(LICENSES_URL, wait_until="domcontentloaded", timeout=60000)
                     await page.wait_for_timeout(2000)
                     btn2 = await page.query_selector('a:has-text("Ajustes"), button:has-text("Ajustes")')
                     if btn2:
