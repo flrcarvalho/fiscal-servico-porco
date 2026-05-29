@@ -6,7 +6,7 @@ from zoneinfo import ZoneInfo
 from telegram import Bot
 from telegram.error import TelegramError
 from database import get_all_active_licenses, update_monitor_state, get_monitor_state, get_cookies
-from scraper import scrape_license, ALERT_STATUSES
+from scraper import scrape_license, ALERT_STATUSES, SILENT_STATUSES
 
 logger = logging.getLogger(__name__)
 
@@ -189,45 +189,41 @@ async def process_license(bot: Bot, lic: dict, first_scan: bool = False):
         summary_text, alert=False
     )
 
-    # ── Alertas só para apostas NOVAS com problema ─────────
-    if not first_scan and new_bets:
-        problems = [b for b in new_bets if b["status_key"] in ALERT_STATUSES]
-        by_type: dict = {}
-        for b in problems:
-            by_type.setdefault(b["status_key"], []).append(b)
+    # ── Alertas baseados na ÚLTIMA aposta ────────────────────
+    # A última aposta é quem define o estado atual do robô.
+    # Se a última foi "feita" ou "odd_derretida" — tudo bem.
+    # Só alerta se a última aposta tiver problema.
+    if not first_scan and bets:
+        last_bet = bets[0]  # bets[0] = mais recente
+        last_status = last_bet["status_key"]
+        prev_last_bet_id = (state.get("last_bet_id") or "").split("||")[0] if state.get("last_bet_id") else ""
+        last_bet_changed = last_bet["id"] != prev_last_bet_id
 
-        # Robô desligado / voltou
-        robot_just_off  = prev_robot_status == "LIGADO"    and robot_status == "DESLIGADO"
-        robot_still_off = prev_robot_status == "DESLIGADO" and robot_status == "DESLIGADO"
-        robot_back_on   = prev_robot_status == "DESLIGADO" and robot_status == "LIGADO"
+        # Só age se a última aposta mudou
+        if last_bet_changed:
+            if last_status in ALERT_STATUSES:
+                # Última aposta tem problema — alerta!
+                alert_text = build_alert_text(label, [last_bet], last_status)
+                new_alert_id = await send_or_edit(
+                    bot, chat_id, prev_alert_id, alert_text, alert=True
+                )
+                update_monitor_state(lid, alert_message_id=new_alert_id)
+            elif last_status in SILENT_STATUSES:
+                # Última aposta OK — se havia alerta ativo, avisa que voltou ao normal
+                if prev_alert_id:
+                    await bot.send_message(
+                        chat_id=chat_id,
+                        text=f"✅ *Robô voltou ao normal!*\n📋 *{label}*\n\n{last_bet['emoji']} {last_bet['game']} — {last_bet['time']}\n\n🕐 {now}",
+                        parse_mode="Markdown"
+                    )
+                    update_monitor_state(lid, alert_message_id=None)
+                    prev_alert_id = None
 
-        if robot_back_on:
-            await bot.send_message(
-                chat_id=chat_id,
-                text=f"✅ *ROBÔ LIGADO NOVAMENTE*\n📋 *{label}*\n\n🕐 {now}",
-                parse_mode="Markdown"
-            )
-            update_monitor_state(lid, alert_message_id=None)
-            prev_alert_id = None
-
-        if robot_just_off or robot_still_off:
-            off_bets = [b for b in bets if b["status_key"] == "robo_desligado"]
-            alert_text = build_alert_text(
-                label,
-                off_bets or [{"game": "—", "time": now, "status_text": "Robô Desligado", "status_key": "robo_desligado"}],
-                "robo_desligado"
-            )
-            new_alert_id = await send_or_edit(bot, chat_id, prev_alert_id, alert_text, alert=robot_just_off)
-            update_monitor_state(lid, alert_message_id=new_alert_id)
-
-        for alert_type, bet_list in by_type.items():
-            if alert_type == "robo_desligado":
-                continue
-            await bot.send_message(
-                chat_id=chat_id,
-                text=build_alert_text(label, bet_list, alert_type),
-                parse_mode="Markdown"
-            )
+        # Status do robô na badge (LIGADO/DESLIGADO)
+        robot_back_on = prev_robot_status == "DESLIGADO" and robot_status == "LIGADO"
+        if robot_back_on and last_status in SILENT_STATUSES:
+            # Já coberto acima
+            pass
 
     # Salva cookies novos se o login foi renovado automaticamente
     new_cf   = result.get("new_cf_clearance", "")
