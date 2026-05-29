@@ -258,11 +258,24 @@ async def first_scan_license(license_id: int):
         await process_license(bot, lic, first_scan=True)
 
 
+async def _safe_process(bot, lic):
+    """Processa uma licença com timeout — nunca trava o loop."""
+    try:
+        await asyncio.wait_for(process_license(bot, lic), timeout=180)
+    except asyncio.TimeoutError:
+        logger.error(f"[{lic['label']}] Timeout de 180s — pulando ciclo")
+    except Exception as e:
+        logger.error(f"[{lic['label']}] Erro inesperado: {e}")
+
+
 async def monitor_loop():
     bot = Bot(token=BOT_TOKEN)
     logger.info(f"🐷 Fiscal iniciado. Intervalo: {CHECK_INTERVAL}s")
+    cycle = 0
     while True:
+        cycle += 1
         licenses = get_all_active_licenses()
-        logger.info(f"Monitorando {len(licenses)} licença(s)...")
-        await asyncio.gather(*[process_license(bot, lic) for lic in licenses], return_exceptions=True)
+        logger.info(f"Ciclo #{cycle} — Monitorando {len(licenses)} licença(s)...")
+        await asyncio.gather(*[_safe_process(bot, lic) for lic in licenses])
+        logger.info(f"Ciclo #{cycle} concluído. Aguardando {CHECK_INTERVAL}s...")
         await asyncio.sleep(CHECK_INTERVAL)
