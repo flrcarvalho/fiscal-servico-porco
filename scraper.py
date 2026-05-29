@@ -198,8 +198,14 @@ async def scrape_license(email: str, password: str,
             await page.goto(target, wait_until="domcontentloaded", timeout=30000)
             await page.wait_for_timeout(2000)
 
-            # Se caiu no login, precisa autenticar
-            if "login" in page.url:
+            # Verifica se está logado — pela URL ou pelo conteúdo da página
+            page_text = await page.inner_text("body")
+            session_expired = (
+                "login" in page.url or
+                "Informe seus dados" in page_text or
+                "E-mail" in page_text and "Senha" in page_text and "Login" in page_text
+            )
+            if session_expired:
                 logger.info("Sessão expirada, fazendo novo login via CapSolver...")
                 if not capsolver_key:
                     await browser.close()
@@ -232,6 +238,25 @@ async def scrape_license(email: str, password: str,
             current_url  = page.url
             robot_status = await _get_robot_status(page)
             bets         = await _get_bets_fresh(page)
+
+            # Se não achou apostas e status UNKNOWN, pode ser sessão inválida
+            # Tenta re-login se tiver CapSolver
+            if robot_status == "UNKNOWN" and not bets and capsolver_key:
+                logger.info("Sem dados — tentando re-login via CapSolver...")
+                logged = await do_login_with_capsolver(page, email, password, capsolver_key)
+                if logged:
+                    new_cookies = await context.cookies()
+                    cf_new   = next((c["value"] for c in new_cookies if c["name"] == "cf_clearance"), cf_new)
+                    r365_new = next((c["value"] for c in new_cookies if c["name"] == "R365"), r365_new)
+                    await page.goto(LICENSES_URL, wait_until="domcontentloaded", timeout=30000)
+                    await page.wait_for_timeout(2000)
+                    btn2 = await page.query_selector('a:has-text("Ajustes"), button:has-text("Ajustes")')
+                    if btn2:
+                        await btn2.click()
+                        await page.wait_for_timeout(2000)
+                    robot_status = await _get_robot_status(page)
+                    bets         = await _get_bets_fresh(page)
+                    current_url  = page.url
 
             await browser.close()
             return {
