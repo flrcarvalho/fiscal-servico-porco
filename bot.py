@@ -10,7 +10,7 @@ from telegram.ext import (
 from database import (
     init_db, user_exists, create_user, use_invite,
     add_license, get_licenses, remove_license, create_invite,
-    save_cookies, get_monitor_state
+    save_cookies, get_monitor_state, update_monitor_state as update_monitor_state_fn
 )
 
 logger = logging.getLogger(__name__)
@@ -323,6 +323,18 @@ async def gerar_convite(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(msg, parse_mode="Markdown")
 
 
+
+
+async def ok_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    tid = str(update.effective_user.id)
+    if not user_exists(tid):
+        await update.message.reply_text("Nao cadastrado.")
+        return
+    licenses = get_licenses(tid)
+    for lic in licenses:
+        update_monitor_state_fn(lic["id"], alert_message_id=None)
+    await update.message.reply_text("OK! Alertas resetados. Novo problema surgir, aviso. 🐷")
+
 async def unknown(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "Não entendi. Use /start para ver os comandos disponíveis.",
@@ -360,6 +372,8 @@ def build_app():
 
     app.add_handler(conv)
     app.add_handler(CommandHandler("minhas_licencas", minhas_licencas))
+    app.add_handler(CommandHandler("ok", ok_cmd))
+    app.add_handler(CommandHandler("ok", ok_cmd))
     app.add_handler(CommandHandler("status", status_cmd))
     app.add_handler(CommandHandler("gerar_convite", gerar_convite))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, unknown))
