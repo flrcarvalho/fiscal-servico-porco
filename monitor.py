@@ -11,6 +11,7 @@ from scraper import scrape_license, ALERT_STATUSES
 logger = logging.getLogger(__name__)
 
 BOT_TOKEN      = os.environ.get("TELEGRAM_BOT_TOKEN", "")
+CAPSOLVER_KEY  = os.environ.get("CAPSOLVER_KEY", "")
 CHECK_INTERVAL = int(os.environ.get("CHECK_INTERVAL_SECONDS", "60"))
 TZ             = ZoneInfo("America/Sao_Paulo")
 
@@ -126,7 +127,7 @@ async def process_license(bot: Bot, lic: dict, first_scan: bool = False):
     cf   = cookies.get("cf_clearance", "")
     r365 = cookies.get("r365_cookie", "")
 
-    result = await scrape_license(email, password, cf, r365, license_url)
+    result = await scrape_license(email, password, cf, r365, license_url, CAPSOLVER_KEY)
 
     if connecting_msg:
         try:
@@ -227,6 +228,14 @@ async def process_license(bot: Bot, lic: dict, first_scan: bool = False):
                 text=build_alert_text(label, bet_list, alert_type),
                 parse_mode="Markdown"
             )
+
+    # Salva cookies novos se o login foi renovado automaticamente
+    new_cf   = result.get("new_cf_clearance", "")
+    new_r365 = result.get("new_r365_cookie", "")
+    if new_cf and new_r365 and (new_cf != cf or new_r365 != r365):
+        from database import save_cookies
+        save_cookies(lid, new_cf, new_r365)
+        logger.info(f"[{label}] Cookies renovados automaticamente")
 
     # ── Persiste estado ────────────────────────────────────
     update_monitor_state(
