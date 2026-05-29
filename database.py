@@ -65,9 +65,14 @@ def init_db():
             summary_message_id TEXT,
             alert_message_id TEXT,
             last_check TEXT,
+            license_url TEXT DEFAULT '',
             FOREIGN KEY (license_id) REFERENCES licenses(id)
         )
     """)
+    try:
+        c.execute("ALTER TABLE monitor_state ADD COLUMN license_url TEXT DEFAULT ''")
+    except Exception:
+        pass
 
     conn.commit()
     conn.close()
