@@ -2,6 +2,8 @@ import asyncio
 import logging
 import os
 from datetime import datetime
+from zoneinfo import ZoneInfo
+_TZ = ZoneInfo("America/Sao_Paulo")
 from telegram import Bot
 from telegram.error import TelegramError
 from database import get_all_active_licenses, update_monitor_state, get_monitor_state, get_cookies
@@ -103,7 +105,7 @@ async def process_license(bot: Bot, lic: dict, first_scan: bool = False):
     prev_alert_msg_id = state.get("alert_message_id")
     seen_bets = set((state.get("last_bet_id") or "").split("||")) - {""}
 
-    now = datetime.now().strftime("%d/%m - %H:%M")
+    now = datetime.now(_TZ).strftime("%d/%m - %H:%M")
 
     # Mensagem de "conectando" no primeiro scan
     connecting_msg = None
@@ -120,7 +122,7 @@ async def process_license(bot: Bot, lic: dict, first_scan: bool = False):
     cf = cookies.get("cf_clearance", "")
     r365 = cookies.get("r365_cookie", "")
 
-    result = await scrape_license(email, password, cf, r365)
+    result = await scrape_license(email, password, cf, r365, first_scan=first_scan)
 
     if connecting_msg:
         try:
