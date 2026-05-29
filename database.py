@@ -1,7 +1,6 @@
 import sqlite3
 import os
 import secrets
-from datetime import datetime
 
 DB_PATH = os.environ.get("DB_PATH", "fiscal.db")
 
@@ -31,10 +30,22 @@ def init_db():
             password TEXT NOT NULL,
             label TEXT,
             active INTEGER DEFAULT 1,
+            cf_clearance TEXT DEFAULT '',
+            r365_cookie TEXT DEFAULT '',
             created_at TEXT DEFAULT (datetime('now')),
             FOREIGN KEY (user_telegram_id) REFERENCES users(telegram_id)
         )
     """)
+
+    # Migração: adiciona colunas de cookie se não existirem
+    try:
+        c.execute("ALTER TABLE licenses ADD COLUMN cf_clearance TEXT DEFAULT ''")
+    except Exception:
+        pass
+    try:
+        c.execute("ALTER TABLE licenses ADD COLUMN r365_cookie TEXT DEFAULT ''")
+    except Exception:
+        pass
 
     c.execute("""
         CREATE TABLE IF NOT EXISTS invite_codes (
@@ -61,7 +72,7 @@ def init_db():
     conn.commit()
     conn.close()
 
-# ── Invite codes ────────────────────────────────────────────
+# ── Invite codes ─────────────────────────────────────────────
 
 def create_invite(n=1):
     conn = get_conn()
@@ -90,15 +101,7 @@ def use_invite(code, telegram_id):
     conn.close()
     return True
 
-def invite_exists(code):
-    conn = get_conn()
-    row = conn.execute(
-        "SELECT * FROM invite_codes WHERE code=? AND used=0", (code.upper(),)
-    ).fetchone()
-    conn.close()
-    return row is not None
-
-# ── Users ────────────────────────────────────────────────────
+# ── Users ─────────────────────────────────────────────────────
 
 def user_exists(telegram_id):
     conn = get_conn()
@@ -115,7 +118,7 @@ def create_user(telegram_id, username=None):
     conn.commit()
     conn.close()
 
-# ── Licenses ─────────────────────────────────────────────────
+# ── Licenses ──────────────────────────────────────────────────
 
 def add_license(telegram_id, email, password, label=None):
     conn = get_conn()
@@ -124,9 +127,7 @@ def add_license(telegram_id, email, password, label=None):
         (str(telegram_id), email, password, label or email)
     )
     lid = cur.lastrowid
-    conn.execute(
-        "INSERT INTO monitor_state (license_id) VALUES (?)", (lid,)
-    )
+    conn.execute("INSERT INTO monitor_state (license_id) VALUES (?)", (lid,))
     conn.commit()
     conn.close()
     return lid
@@ -159,6 +160,23 @@ def remove_license(license_id, telegram_id):
     )
     conn.commit()
     conn.close()
+
+def save_cookies(license_id: int, cf_clearance: str, r365_cookie: str):
+    conn = get_conn()
+    conn.execute(
+        "UPDATE licenses SET cf_clearance=?, r365_cookie=? WHERE id=?",
+        (cf_clearance, r365_cookie, license_id)
+    )
+    conn.commit()
+    conn.close()
+
+def get_cookies(license_id: int):
+    conn = get_conn()
+    row = conn.execute(
+        "SELECT cf_clearance, r365_cookie FROM licenses WHERE id=?", (license_id,)
+    ).fetchone()
+    conn.close()
+    return dict(row) if row else {"cf_clearance": "", "r365_cookie": ""}
 
 # ── Monitor state ─────────────────────────────────────────────
 
