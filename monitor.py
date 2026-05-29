@@ -138,10 +138,14 @@ async def process_license(bot: Bot, lic: dict, first_scan: bool = False):
     if not result["success"]:
         err = result["error"]
         logger.error(f"[{label}] Falhou: {err}")
+        # Timeout é temporário — silencia e tenta no próximo ciclo
+        if "Timeout" in err or "timeout" in err or "TimeoutError" in err:
+            logger.warning(f"[{label}] Timeout ignorado, tentando no próximo ciclo")
+            return
         if "expirada" in err or "Cookies não" in err:
             await bot.send_message(
                 chat_id=chat_id,
-                text=f"⚠️ *Sessão expirada* — *{label}*\n\nUse /atualizar\\_cookies para renovar.",
+                text=f"⚠️ *Sessão expirada* — *{label}*\n\nUse /atualizar\_cookies para renovar.",
                 parse_mode="Markdown"
             )
         else:
