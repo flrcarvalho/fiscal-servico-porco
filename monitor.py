@@ -16,7 +16,7 @@ TZ             = ZoneInfo("America/Sao_Paulo")
 
 STATUS_EMOJI = {
     "feita":              "✅",
-    "odd_derretida":      "🔥",
+    "odd_derretida":      "💩",
     "robo_desligado":     "📴",
     "saldo_insuficiente": "💸",
     "conta_limitada":     "🚫",
@@ -158,8 +158,11 @@ async def process_license(bot: Bot, lic: dict, first_scan: bool = False):
     # IDs das apostas atuais
     all_ids = "||".join(b["id"] for b in bets)
 
-    # Apostas que ainda não vimos
-    new_bets = [b for b in bets if b["id"] not in seen_ids]
+    # No primeiro scan: todas já vistas — sem alertas retroativos
+    if first_scan:
+        new_bets = []
+    else:
+        new_bets = [b for b in bets if b["id"] not in seen_ids]
 
     # ── Primeiro scan ─────────────────────────────────────
     if first_scan:
