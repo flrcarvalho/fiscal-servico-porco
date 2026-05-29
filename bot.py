@@ -49,6 +49,7 @@ async def start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             f"/minhas\\_licencas — Ver licenças\n"
             f"/atualizar\\_cookies — Renovar cookies\n"
             f"/remover — Remover licença\n"
+            f"/ok — Problema resolvido\n"
             f"/status — Ver status atual",
             parse_mode="Markdown"
         )
@@ -220,11 +221,7 @@ async def receive_r365_cookie(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         parse_mode="Markdown"
     )
 
-    from database import get_all_active_licenses
-    licenses = get_all_active_licenses()
-    lic = next((l for l in licenses if l["id"] == lid), None)
-    if lic:
-        asyncio.create_task(_trigger_first_scan(lid))
+    asyncio.create_task(_trigger_first_scan(lid))
 
     return ConversationHandler.END
 
@@ -324,7 +321,6 @@ async def gerar_convite(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
 
 
-
 async def ok_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     tid = str(update.effective_user.id)
     if not user_exists(tid):
@@ -372,7 +368,6 @@ def build_app():
 
     app.add_handler(conv)
     app.add_handler(CommandHandler("minhas_licencas", minhas_licencas))
-    app.add_handler(CommandHandler("ok", ok_cmd))
     app.add_handler(CommandHandler("ok", ok_cmd))
     app.add_handler(CommandHandler("status", status_cmd))
     app.add_handler(CommandHandler("gerar_convite", gerar_convite))
