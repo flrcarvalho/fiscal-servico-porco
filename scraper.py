@@ -2,11 +2,13 @@ import asyncio
 import logging
 import re
 from datetime import datetime
+from zoneinfo import ZoneInfo
 from playwright.async_api import async_playwright
 
 logger = logging.getLogger(__name__)
 
 LICENSES_URL = "https://www.robos365.com.br/tennis365/licenses.html"
+TZ = ZoneInfo("America/Sao_Paulo")
 
 STATUS_MAP = {
     "aposta feita":              ("✅", "feita"),
@@ -31,13 +33,21 @@ def classify_status(text: str):
 ALERT_STATUSES  = {"robo_desligado", "saldo_insuficiente", "conta_limitada", "outros", "verificacao"}
 SILENT_STATUSES = {"feita", "odd_derretida", "valor_maximo", "mercado_suspenso"}
 
-def _today_prefix() -> str:
-    """Retorna o prefixo de hoje no formato do site: '28/05'"""
-    return datetime.now().strftime("%d/%m")
+def now_brt():
+    return datetime.now(TZ)
+
+def today_prefix() -> str:
+    """Retorna prefixo de hoje no horário de Brasília: '28/05'"""
+    return now_brt().strftime("%d/%m")
+
+def today_full() -> str:
+    """Retorna data de hoje no formato do input: '2026-05-28'"""
+    return now_brt().strftime("%Y-%m-%d")
 
 
 async def scrape_license(email: str, password: str,
-                         cf_clearance: str = "", r365_cookie: str = "") -> dict:
+                         cf_clearance: str = "", r365_cookie: str = "",
+                         first_scan: bool = False) -> dict:
     if not cf_clearance or not r365_cookie:
         return {"success": False, "error": "Cookies não configurados. Use /atualizar_cookies no bot."}
 
@@ -87,7 +97,6 @@ async def scrape_license(email: str, password: str,
                 await browser.close()
                 return {"success": False, "error": "Sessão expirada. Use /atualizar_cookies no bot para renovar."}
 
-            # Clica em Ajustes da primeira licença
             btn = await page.query_selector('a:has-text("Ajustes"), button:has-text("Ajustes")')
             if btn:
                 await btn.click()
@@ -95,7 +104,7 @@ async def scrape_license(email: str, password: str,
 
             robot_status = await _get_robot_status(page)
             logs = await _get_logs(page)
-            bets = await _get_bets(page)
+            bets = await _get_bets(page, first_scan=first_scan)
 
             await browser.close()
             return {
@@ -114,7 +123,6 @@ async def scrape_license(email: str, password: str,
 
 async def _get_robot_status(page) -> str:
     try:
-        # Seletor exato: span.badge.bg-success ou span.badge.bg-danger
         badges = await page.query_selector_all("span.badge")
         for badge in badges:
             txt = (await badge.inner_text()).strip().upper()
@@ -140,12 +148,11 @@ async def _get_logs(page) -> list:
     return logs
 
 
-async def _get_bets(page) -> list:
+async def _get_bets(page, first_scan: bool = False) -> list:
     bets = []
-    today = _today_prefix()  # ex: "28/05"
+    today = today_prefix()  # ex: "28/05" no horário de Brasília
 
     try:
-        # Clica em Apostas Processadas
         link = await page.query_selector(
             'a:has-text("Apostas Processadas"), li:has-text("Apostas Processadas")'
         )
@@ -153,16 +160,15 @@ async def _get_bets(page) -> list:
             await link.click()
             await page.wait_for_timeout(2000)
 
-        # Muda a data de início para hoje
-        today_full = datetime.now().strftime("%Y-%m-%d")
+        # Preenche data de hoje nos filtros
+        t_full = today_full()
         date_inputs = await page.query_selector_all('input[type="date"]')
         if len(date_inputs) >= 1:
-            await date_inputs[0].fill(today_full)
+            await date_inputs[0].fill(t_full)
         if len(date_inputs) >= 2:
-            await date_inputs[1].fill(today_full)
+            await date_inputs[1].fill(t_full)
 
-        # Clica no botão de busca
-        search_btn = await page.query_selector('button[type="submit"], button.btn-primary, button:has(svg)')
+        search_btn = await page.query_selector('button[type="submit"], button.btn-primary')
         if search_btn:
             await search_btn.click()
             await page.wait_for_timeout(2000)
@@ -171,13 +177,9 @@ async def _get_bets(page) -> list:
         if not rows:
             rows = await page.query_selector_all('div.card, tr')
 
+        all_bets = []
         for row in rows:
             text = await row.inner_text()
-
-            # Filtra só apostas de hoje
-            if today not in text:
-                continue
-
             if " vs " not in text.lower():
                 continue
 
@@ -203,7 +205,7 @@ async def _get_bets(page) -> list:
             emoji, status_key = classify_status(status_text)
             bet_id = f"{game_line}|{time_str}"
 
-            bets.append({
+            all_bets.append({
                 "id": bet_id,
                 "game": game_line,
                 "time": time_str,
@@ -212,6 +214,13 @@ async def _get_bets(page) -> list:
                 "status_key": status_key,
                 "emoji": emoji,
             })
+
+        if first_scan:
+            # No primeiro scan: retorna as últimas 3 apostas independente da data
+            bets = all_bets[:3]
+        else:
+            # Ciclos normais: só apostas de hoje
+            bets = [b for b in all_bets if today in b["time"]]
 
     except Exception as e:
         logger.error(f"Erro ao extrair apostas: {e}")
