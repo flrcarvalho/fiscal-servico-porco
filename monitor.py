@@ -39,6 +39,10 @@ ALERT_TITLES = {
 def now_brt():
     return datetime.now(TZ).strftime("%d/%m - %H:%M")
 
+def today_str():
+    """Retorna a data atual como string YYYY-MM-DD no fuso BRT."""
+    return datetime.now(TZ).strftime("%Y-%m-%d")
+
 
 def build_summary_text(label, bets, robot_status, last_check):
     robot_icon = "🟢" if robot_status == "LIGADO" else "🔴" if robot_status == "DESLIGADO" else "⚪"
@@ -105,14 +109,26 @@ async def process_license(bot: Bot, lic: dict, first_scan: bool = False):
     password = lic["password"]
     chat_id  = lic["user_telegram_id"]
 
-    state              = get_monitor_state(lid)
-    prev_robot_status  = state.get("robot_status", "UNKNOWN")
-    prev_summary_id    = state.get("summary_message_id")
-    prev_alert_id      = state.get("alert_message_id")
-    seen_ids           = set((state.get("last_bet_id") or "").split("||")) - {""}
-    license_url        = state.get("license_url", "")
+    state             = get_monitor_state(lid)
+    prev_robot_status = state.get("robot_status", "UNKNOWN")
+    prev_summary_id   = state.get("summary_message_id")
+    prev_alert_id     = state.get("alert_message_id")
+    seen_ids          = set((state.get("last_bet_id") or "").split("||")) - {""}
+    license_url       = state.get("license_url", "")
+    summary_date      = state.get("summary_date", "")
 
-    now = now_brt()
+    now   = now_brt()
+    today = today_str()
+
+    # ── Reset diário: se o resumo é de outro dia, apaga e cria novo ──
+    if prev_summary_id and summary_date != today and not first_scan:
+        logger.info(f"[{label}] Novo dia detectado ({summary_date} → {today}), resetando mensagem de resumo")
+        try:
+            await bot.delete_message(chat_id=chat_id, message_id=int(prev_summary_id))
+        except Exception:
+            pass
+        prev_summary_id = None
+        update_monitor_state(lid, summary_message_id=None, summary_date=today)
 
     # Msg de "conectando" só no primeiro scan
     connecting_msg = None
@@ -138,7 +154,6 @@ async def process_license(bot: Bot, lic: dict, first_scan: bool = False):
     if not result["success"]:
         err = result["error"]
         logger.error(f"[{label}] Falhou: {err}")
-        # Timeout é temporário — silencia e tenta no próximo ciclo
         if "Timeout" in err or "timeout" in err or "TimeoutError" in err:
             logger.warning(f"[{label}] Timeout ignorado, tentando no próximo ciclo")
             return
@@ -156,20 +171,18 @@ async def process_license(bot: Bot, lic: dict, first_scan: bool = False):
             )
         return
 
-    robot_status  = result["robot_status"]
-    bets          = result["bets"]
+    robot_status    = result["robot_status"]
+    bets            = result["bets"]
     new_license_url = result.get("license_url", license_url)
 
-    # IDs das apostas atuais
     all_ids = "||".join(b["id"] for b in bets)
 
-    # No primeiro scan: todas já vistas — sem alertas retroativos
     if first_scan:
         new_bets = []
     else:
         new_bets = [b for b in bets if b["id"] not in seen_ids]
 
-    # ── Primeiro scan ─────────────────────────────────────
+    # ── Primeiro scan ──────────────────────────────────────
     if first_scan:
         robot_icon = "🟢" if robot_status == "LIGADO" else "🔴"
         await bot.send_message(
@@ -185,7 +198,7 @@ async def process_license(bot: Bot, lic: dict, first_scan: bool = False):
             parse_mode="Markdown"
         )
 
-    # ── Resumo (sempre edita silenciosamente) ──────────────
+    # ── Resumo (edita se for do mesmo dia, senão cria novo) ─
     summary_text   = build_summary_text(label, bets, robot_status, now)
     new_summary_id = await send_or_edit(
         bot, chat_id,
@@ -193,27 +206,21 @@ async def process_license(bot: Bot, lic: dict, first_scan: bool = False):
         summary_text, alert=False
     )
 
-    # ── Alertas baseados na ÚLTIMA aposta ────────────────────
-    # A última aposta é quem define o estado atual do robô.
-    # Se a última foi "feita" ou "odd_derretida" — tudo bem.
-    # Só alerta se a última aposta tiver problema.
+    # ── Alertas baseados na última aposta ──────────────────
     if not first_scan and bets:
-        last_bet = bets[0]  # bets[0] = mais recente
-        last_status = last_bet["status_key"]
+        last_bet     = bets[0]
+        last_status  = last_bet["status_key"]
         prev_last_bet_id = (state.get("last_bet_id") or "").split("||")[0] if state.get("last_bet_id") else ""
         last_bet_changed = last_bet["id"] != prev_last_bet_id
 
-        # Só age se a última aposta mudou
         if last_bet_changed:
             if last_status in ALERT_STATUSES:
-                # Última aposta tem problema — alerta!
-                alert_text = build_alert_text(label, [last_bet], last_status)
+                alert_text   = build_alert_text(label, [last_bet], last_status)
                 new_alert_id = await send_or_edit(
                     bot, chat_id, prev_alert_id, alert_text, alert=True
                 )
                 update_monitor_state(lid, alert_message_id=new_alert_id)
             elif last_status in SILENT_STATUSES:
-                # Última aposta OK — se havia alerta ativo, avisa que voltou ao normal
                 if prev_alert_id:
                     await bot.send_message(
                         chat_id=chat_id,
@@ -223,13 +230,7 @@ async def process_license(bot: Bot, lic: dict, first_scan: bool = False):
                     update_monitor_state(lid, alert_message_id=None)
                     prev_alert_id = None
 
-        # Status do robô na badge (LIGADO/DESLIGADO)
-        robot_back_on = prev_robot_status == "DESLIGADO" and robot_status == "LIGADO"
-        if robot_back_on and last_status in SILENT_STATUSES:
-            # Já coberto acima
-            pass
-
-    # Salva cookies novos se o login foi renovado automaticamente
+    # Salva cookies novos se renovados automaticamente
     new_cf   = result.get("new_cf_clearance", "")
     new_r365 = result.get("new_r365_cookie", "")
     if new_cf and new_r365 and (new_cf != cf or new_r365 != r365):
@@ -243,6 +244,7 @@ async def process_license(bot: Bot, lic: dict, first_scan: bool = False):
         last_bet_id=all_ids,
         robot_status=robot_status,
         summary_message_id=new_summary_id,
+        summary_date=today,
         last_check=now,
         license_url=new_license_url,
     )
