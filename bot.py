@@ -114,7 +114,7 @@ async def receive_label(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         f"Use /atualizar\\_cookies para configurar.",
         parse_mode="Markdown"
     )
-    asyncio.create_task(_trigger_first_scan(lid))
+    ctx.application.create_task(_trigger_first_scan(lid))
     return ConversationHandler.END
 
 
@@ -128,7 +128,7 @@ async def skip_label(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         f"⚠️ Use /atualizar\\_cookies para configurar os cookies de acesso.",
         parse_mode="Markdown"
     )
-    asyncio.create_task(_trigger_first_scan(lid))
+    ctx.application.create_task(_trigger_first_scan(lid))
     return ConversationHandler.END
 
 
@@ -221,7 +221,7 @@ async def receive_r365_cookie(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         parse_mode="Markdown"
     )
 
-    asyncio.create_task(_trigger_first_scan(lid))
+    ctx.application.create_task(_trigger_first_scan(lid))
 
     return ConversationHandler.END
 
@@ -320,7 +320,6 @@ async def gerar_convite(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(msg, parse_mode="Markdown")
 
 
-
 async def ok_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     tid = str(update.effective_user.id)
     if not user_exists(tid):
@@ -363,6 +362,7 @@ async def ok_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                 pass
         update_monitor_state_fn(lic["id"], alert_message_id=None)
     await update.message.reply_text("OK! Alertas resetados. Monitorando normalmente. \U0001f437")
+
 
 async def unknown(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
