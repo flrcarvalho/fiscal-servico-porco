@@ -40,7 +40,6 @@ SILENT_STATUSES = {"feita", "odd_derretida", "valor_maximo", "mercado_suspenso"}
 
 def solve_turnstile(capsolver_key: str, page_url: str, site_key: str, timeout: int = 60) -> str:
     """Resolve Cloudflare Turnstile via CapSolver API."""
-    # Cria tarefa
     resp = requests.post(
         "https://api.capsolver.com/createTask",
         json={
@@ -56,11 +55,10 @@ def solve_turnstile(capsolver_key: str, page_url: str, site_key: str, timeout: i
     data = resp.json()
     if data.get("errorId", 1) != 0:
         raise Exception(f"CapSolver createTask error: {data.get('errorDescription')}")
-    
+
     task_id = data["taskId"]
     logger.info(f"CapSolver task criada: {task_id}")
 
-    # Aguarda resolução
     deadline = time.time() + timeout
     while time.time() < deadline:
         time.sleep(3)
@@ -86,9 +84,8 @@ async def do_login_with_capsolver(page, email: str, password: str, capsolver_key
         await page.goto(LOGIN_URL, wait_until="domcontentloaded", timeout=60000)
         await page.wait_for_timeout(2000)
 
-        # Pega o sitekey do Turnstile
         site_key = await page.evaluate("""() => {
-            const el = document.querySelector('[data-sitekey]') || 
+            const el = document.querySelector('[data-sitekey]') ||
                        document.querySelector('.cf-turnstile') ||
                        document.querySelector('iframe[src*="challenges.cloudflare"]');
             if (el) return el.getAttribute('data-sitekey') || el.src?.match(/k=([^&]+)/)?.[1] || null;
@@ -96,25 +93,19 @@ async def do_login_with_capsolver(page, email: str, password: str, capsolver_key
         }""")
 
         if not site_key:
-            # Tenta sitekey padrão do Cloudflare
             site_key = "0x4AAAAAAAf8m6nMXpvxJXtQ"
             logger.warning(f"Sitekey não encontrada, usando padrão: {site_key}")
 
         logger.info(f"Resolvendo Turnstile com CapSolver (sitekey: {site_key})...")
 
-        # Resolve em thread separada (é síncrono)
         loop = asyncio.get_event_loop()
         token = await loop.run_in_executor(
             None, lambda: solve_turnstile(capsolver_key, LOGIN_URL, site_key)
         )
 
-        # Injeta o token na página
         await page.evaluate(f"""(token) => {{
-            // Tenta setar no campo hidden do Turnstile
             const inputs = document.querySelectorAll('input[name="cf-turnstile-response"]');
             inputs.forEach(i => i.value = token);
-            
-            // Tenta também via callback do Turnstile
             if (window.turnstile) {{
                 window.turnstile.getResponse = () => token;
             }}
@@ -122,13 +113,11 @@ async def do_login_with_capsolver(page, email: str, password: str, capsolver_key
 
         await page.wait_for_timeout(500)
 
-        # Preenche email e senha
         await page.fill('input[placeholder="E-mail"], input[type="email"]', email)
         await page.wait_for_timeout(300)
         await page.fill('input[placeholder="Senha"], input[type="password"]', password)
         await page.wait_for_timeout(300)
 
-        # Clica em Login
         await page.click('button:has-text("Login"), input[type="submit"], button[type="submit"]')
         await page.wait_for_timeout(4000)
 
@@ -144,14 +133,38 @@ async def do_login_with_capsolver(page, email: str, password: str, capsolver_key
         return False
 
 
+async def _navigate_to_apostas(page) -> bool:
+    """
+    Navega para a aba 'Apostas Processadas' e aguarda os cards carregarem.
+    Retorna True se chegou lá com sucesso.
+    """
+    try:
+        # Clica em Apostas Processadas
+        link = await page.query_selector('a:has-text("Apostas Processadas"), li:has-text("Apostas Processadas")')
+        if not link:
+            logger.warning("Link 'Apostas Processadas' não encontrado")
+            return False
+
+        await link.click()
+
+        # Aguarda os cards aparecerem (até 10s)
+        try:
+            await page.wait_for_selector("div.row.g-0.sh-lg-15, div.card.mb-3", timeout=10000)
+        except Exception:
+            logger.warning("Cards não apareceram em 10s após clicar em Apostas Processadas")
+
+        await page.wait_for_timeout(1000)
+        return True
+
+    except Exception as e:
+        logger.error(f"Erro ao navegar para Apostas Processadas: {e}")
+        return False
+
+
 async def scrape_license(email: str, password: str,
                          cf_clearance: str = "", r365_cookie: str = "",
                          license_url: str = "",
                          capsolver_key: str = "") -> dict:
-    """
-    Acessa o site. Tenta primeiro com cookies salvos.
-    Se falhar (sessão expirada), faz login novo via CapSolver.
-    """
     async with async_playwright() as p:
         browser = await p.chromium.launch(
             headless=True,
@@ -167,7 +180,6 @@ async def scrape_license(email: str, password: str,
             viewport={"width": 1280, "height": 800},
         )
 
-        # Injeta cookies salvos se existirem
         if cf_clearance and r365_cookie:
             await context.add_cookies([
                 {
@@ -193,18 +205,17 @@ async def scrape_license(email: str, password: str,
         page = await context.new_page()
 
         try:
-            # Tenta acessar direto
             target = license_url or LICENSES_URL
             await page.goto(target, wait_until="domcontentloaded", timeout=60000)
             await page.wait_for_timeout(2000)
 
-            # Verifica se está logado — pela URL ou pelo conteúdo da página
             page_text = await page.inner_text("body")
             session_expired = (
                 "login" in page.url or
                 "Informe seus dados" in page_text or
-                "E-mail" in page_text and "Senha" in page_text and "Login" in page_text
+                ("E-mail" in page_text and "Senha" in page_text and "Login" in page_text)
             )
+
             if session_expired:
                 logger.info("Sessão expirada, fazendo novo login via CapSolver...")
                 if not capsolver_key:
@@ -216,31 +227,31 @@ async def scrape_license(email: str, password: str,
                     await browser.close()
                     return {"success": False, "error": "Falha no login automático. Verifique email/senha."}
 
-                # Salva novos cookies após login
                 new_cookies = await context.cookies()
-                cf_new  = next((c["value"] for c in new_cookies if c["name"] == "cf_clearance"), "")
+                cf_new   = next((c["value"] for c in new_cookies if c["name"] == "cf_clearance"), "")
                 r365_new = next((c["value"] for c in new_cookies if c["name"] == "R365"), "")
 
-                # Vai para licenças após login
                 await page.goto(LICENSES_URL, wait_until="domcontentloaded", timeout=60000)
                 await page.wait_for_timeout(2000)
             else:
-                cf_new = cf_clearance
+                cf_new   = cf_clearance
                 r365_new = r365_cookie
 
-            # Entra na licença
+            # Se veio da página de licenças (não de uma URL direta), entra na licença
             if not license_url:
                 btn = await page.query_selector('a:has-text("Ajustes"), button:has-text("Ajustes")')
                 if btn:
                     await btn.click()
-                    await page.wait_for_timeout(2000)
+                    await page.wait_for_timeout(3000)
+
+            # Navega direto para Apostas Processadas
+            await _navigate_to_apostas(page)
 
             current_url  = page.url
             robot_status = await _get_robot_status(page)
-            bets         = await _get_bets_fresh(page)
+            bets         = await _get_bets(page)
 
-            # Se não achou apostas e status UNKNOWN, pode ser sessão inválida
-            # Tenta re-login se tiver CapSolver
+            # Se não achou nada, tenta re-login
             if robot_status == "UNKNOWN" and not bets and capsolver_key:
                 logger.info("Sem dados — tentando re-login via CapSolver...")
                 logged = await do_login_with_capsolver(page, email, password, capsolver_key)
@@ -253,9 +264,10 @@ async def scrape_license(email: str, password: str,
                     btn2 = await page.query_selector('a:has-text("Ajustes"), button:has-text("Ajustes")')
                     if btn2:
                         await btn2.click()
-                        await page.wait_for_timeout(2000)
+                        await page.wait_for_timeout(3000)
+                    await _navigate_to_apostas(page)
                     robot_status = await _get_robot_status(page)
-                    bets         = await _get_bets_fresh(page)
+                    bets         = await _get_bets(page)
                     current_url  = page.url
 
             await browser.close()
@@ -292,23 +304,22 @@ async def _get_robot_status(page) -> str:
     return "UNKNOWN"
 
 
-async def _get_bets_fresh(page) -> list:
+async def _get_bets(page) -> list:
+    """
+    Extrai apostas da página de Apostas Processadas.
+    Seletor principal: div.row.g-0.sh-lg-15
+    Fallback: div.card.mb-3
+    """
     bets = []
     try:
-        # Sai para Visão Geral e volta para forçar atualização
-        overview = await page.query_selector('a:has-text("Visão Geral"), li:has-text("Visão Geral")')
-        if overview:
-            await overview.click()
-            await page.wait_for_timeout(1000)
-
-        link = await page.query_selector('a:has-text("Apostas Processadas"), li:has-text("Apostas Processadas")')
-        if link:
-            await link.click()
-            await page.wait_for_timeout(2000)
-
+        # Seletor principal confirmado pelo DevTools
         rows = await page.query_selector_all("div.row.g-0.sh-lg-15")
+        logger.info(f"Seletor principal: {len(rows)} cards encontrados")
+
         if not rows:
-            rows = await page.query_selector_all("div.p-card")
+            # Fallback: qualquer card mb-3 que contenha " vs "
+            rows = await page.query_selector_all("div.card.mb-3")
+            logger.info(f"Fallback card.mb-3: {len(rows)} cards encontrados")
 
         for row in rows:
             text = await row.inner_text()
@@ -320,12 +331,16 @@ async def _get_bets_fresh(page) -> list:
             if not game_line:
                 continue
 
+            # Remove prefixo de ícone (ex: "> Tomas vs Alen" → "Tomas vs Alen")
+            game_line = re.sub(r"^[^\w]+", "", game_line).strip()
+
             time_match = re.search(r"\d{2}/\d{2}\s*[-–]\s*\d{2}:\d{2}", text)
             time_str   = time_match.group(0).strip() if time_match else ""
 
             bet_match  = re.search(r"Aposta:\s*([\d.,]+)", text)
             bet_amount = bet_match.group(1) if bet_match else "-"
 
+            # Status: procura da última linha para cima
             status_text = ""
             for l in reversed(lines):
                 if any(k in l.lower() for k in STATUS_MAP.keys()):
@@ -338,15 +353,16 @@ async def _get_bets_fresh(page) -> list:
             bet_id = f"{game_line}|{time_str}"
 
             bets.append({
-                "id": bet_id,
-                "game": game_line,
-                "time": time_str,
-                "bet_amount": bet_amount,
+                "id":          bet_id,
+                "game":        game_line,
+                "time":        time_str,
+                "bet_amount":  bet_amount,
                 "status_text": status_text,
-                "status_key": status_key,
-                "emoji": emoji,
+                "status_key":  status_key,
+                "emoji":       emoji,
             })
 
+        logger.info(f"Total de apostas extraídas: {len(bets)}")
         return bets[:10]
 
     except Exception as e:
