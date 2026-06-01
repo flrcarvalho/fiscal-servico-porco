@@ -37,7 +37,7 @@ def init_db():
         )
     """)
 
-    # Migração: adiciona colunas de cookie se não existirem
+    # Migrações: adiciona colunas se não existirem
     try:
         c.execute("ALTER TABLE licenses ADD COLUMN cf_clearance TEXT DEFAULT ''")
     except Exception:
@@ -66,11 +66,18 @@ def init_db():
             alert_message_id TEXT,
             last_check TEXT,
             license_url TEXT DEFAULT '',
+            summary_date TEXT DEFAULT '',
             FOREIGN KEY (license_id) REFERENCES licenses(id)
         )
     """)
+
+    # Migrações monitor_state
     try:
         c.execute("ALTER TABLE monitor_state ADD COLUMN license_url TEXT DEFAULT ''")
+    except Exception:
+        pass
+    try:
+        c.execute("ALTER TABLE monitor_state ADD COLUMN summary_date TEXT DEFAULT ''")
     except Exception:
         pass
 
