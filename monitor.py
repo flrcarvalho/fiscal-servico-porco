@@ -36,12 +36,22 @@ ALERT_TITLES = {
     "outros":             "⚠️ PROBLEMA DETECTADO",
 }
 
+# Erros de rede/transporte que devem ser ignorados silenciosamente
+NETWORK_ERRORS = (
+    "Timeout", "timeout", "TimeoutError",
+    "ERR_TIMED_OUT", "ERR_CONNECTION", "ERR_NAME_NOT_RESOLVED",
+    "net::", "ECONNREFUSED", "ECONNRESET",
+)
+
 def now_brt():
     return datetime.now(TZ).strftime("%d/%m - %H:%M")
 
 def today_str():
     """Retorna a data atual como string YYYY-MM-DD no fuso BRT."""
     return datetime.now(TZ).strftime("%Y-%m-%d")
+
+def is_network_error(err: str) -> bool:
+    return any(e in err for e in NETWORK_ERRORS)
 
 
 def build_summary_text(label, bets, robot_status, last_check):
@@ -154,9 +164,16 @@ async def process_license(bot: Bot, lic: dict, first_scan: bool = False):
     if not result["success"]:
         err = result["error"]
         logger.error(f"[{label}] Falhou: {err}")
-        if "Timeout" in err or "timeout" in err or "TimeoutError" in err:
-            logger.warning(f"[{label}] Timeout ignorado, tentando no próximo ciclo")
+
+        # Erros de rede/timeout: silencia e tenta no próximo ciclo
+        if is_network_error(err):
+            logger.warning(f"[{label}] Erro de rede ignorado, tentando no próximo ciclo: {err}")
+            # Se a license_url foi limpa pelo scraper (ERR_TIMED_OUT), persiste isso
+            if result.get("license_url_cleared"):
+                update_monitor_state(lid, license_url="")
+                logger.info(f"[{label}] license_url limpa no banco")
             return
+
         if "expirada" in err or "Cookies não" in err:
             await bot.send_message(
                 chat_id=chat_id,
