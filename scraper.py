@@ -37,6 +37,8 @@ def classify_status(text: str):
 ALERT_STATUSES  = {"robo_desligado", "saldo_insuficiente", "conta_limitada", "outros", "verificacao"}
 SILENT_STATUSES = {"feita", "odd_derretida", "valor_maximo", "mercado_suspenso"}
 
+NETWORK_ERROR_MARKERS = ("ERR_TIMED_OUT", "ERR_CONNECTION", "ERR_NAME_NOT_RESOLVED", "net::")
+
 
 def solve_turnstile(capsolver_key: str, page_url: str, site_key: str, timeout: int = 60) -> str:
     """Resolve Cloudflare Turnstile via CapSolver API."""
@@ -215,7 +217,20 @@ async def scrape_license(email: str, password: str,
 
         try:
             target = license_url or LICENSES_URL
-            await page.goto(target, wait_until="domcontentloaded", timeout=60000)
+            license_url_cleared = False
+
+            try:
+                await page.goto(target, wait_until="domcontentloaded", timeout=60000)
+            except Exception as nav_err:
+                err_str = str(nav_err)
+                # Se a license_url salva deu erro de rede, limpa ela e tenta pela URL base
+                if license_url and any(m in err_str for m in NETWORK_ERROR_MARKERS):
+                    logger.warning(f"license_url deu erro de rede ({err_str[:80]}), tentando LICENSES_URL...")
+                    license_url_cleared = True
+                    await page.goto(LICENSES_URL, wait_until="domcontentloaded", timeout=60000)
+                else:
+                    raise
+
             await page.wait_for_timeout(2000)
 
             page_text = await page.inner_text("body")
@@ -247,7 +262,7 @@ async def scrape_license(email: str, password: str,
                 r365_new = r365_cookie
 
             # Se veio da página de licenças (não de uma URL direta), entra na licença
-            if not license_url:
+            if not license_url or license_url_cleared:
                 btn = await page.query_selector('a:has-text("Ajustes"), button:has-text("Ajustes")')
                 if btn:
                     await btn.click()
@@ -285,6 +300,7 @@ async def scrape_license(email: str, password: str,
                 "robot_status": robot_status,
                 "bets": bets,
                 "license_url": current_url,
+                "license_url_cleared": license_url_cleared,
                 "new_cf_clearance": cf_new,
                 "new_r365_cookie": r365_new,
                 "error": None,
@@ -296,7 +312,14 @@ async def scrape_license(email: str, password: str,
                 await browser.close()
             except Exception:
                 pass
-            return {"success": False, "error": str(e)}
+            err_str = str(e)
+            # Sinaliza se foi erro de rede na license_url para o monitor limpar no banco
+            license_url_cleared = license_url and any(m in err_str for m in NETWORK_ERROR_MARKERS)
+            return {
+                "success": False,
+                "error": err_str,
+                "license_url_cleared": bool(license_url_cleared),
+            }
 
 
 async def _get_robot_status(page) -> str:
