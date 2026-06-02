@@ -139,7 +139,6 @@ async def _navigate_to_apostas(page) -> bool:
     Retorna True se chegou lá com sucesso.
     """
     try:
-        # Clica em Apostas Processadas
         link = await page.query_selector('a:has-text("Apostas Processadas"), li:has-text("Apostas Processadas")')
         if not link:
             logger.warning("Link 'Apostas Processadas' não encontrado")
@@ -147,7 +146,6 @@ async def _navigate_to_apostas(page) -> bool:
 
         await link.click()
 
-        # Aguarda os cards aparecerem (até 10s)
         try:
             await page.wait_for_selector("div.row.g-0.sh-lg-15, div.card.mb-3", timeout=10000)
         except Exception:
@@ -168,8 +166,19 @@ async def scrape_license(email: str, password: str,
     async with async_playwright() as p:
         browser = await p.chromium.launch(
             headless=True,
-            args=["--no-sandbox", "--disable-setuid-sandbox",
-                  "--disable-blink-features=AutomationControlled"]
+            args=[
+                "--no-sandbox",
+                "--disable-setuid-sandbox",
+                "--disable-blink-features=AutomationControlled",
+                "--disable-dev-shm-usage",        # crítico em container — usa /tmp em vez de /dev/shm
+                "--disable-gpu",                   # sem GPU no Railway
+                "--no-zygote",                     # evita crash de processo filho
+                "--single-process",                # mais estável em ambiente restrito
+                "--disable-extensions",
+                "--disable-background-networking",
+                "--disable-default-apps",
+                "--mute-audio",
+            ]
         )
         context = await browser.new_context(
             user_agent=(
@@ -312,12 +321,10 @@ async def _get_bets(page) -> list:
     """
     bets = []
     try:
-        # Seletor principal confirmado pelo DevTools
         rows = await page.query_selector_all("div.row.g-0.sh-lg-15")
         logger.info(f"Seletor principal: {len(rows)} cards encontrados")
 
         if not rows:
-            # Fallback: qualquer card mb-3 que contenha " vs "
             rows = await page.query_selector_all("div.card.mb-3")
             logger.info(f"Fallback card.mb-3: {len(rows)} cards encontrados")
 
@@ -331,7 +338,6 @@ async def _get_bets(page) -> list:
             if not game_line:
                 continue
 
-            # Remove prefixo de ícone (ex: "> Tomas vs Alen" → "Tomas vs Alen")
             game_line = re.sub(r"^[^\w]+", "", game_line).strip()
 
             time_match = re.search(r"\d{2}/\d{2}\s*[-–]\s*\d{2}:\d{2}", text)
@@ -340,7 +346,6 @@ async def _get_bets(page) -> list:
             bet_match  = re.search(r"Aposta:\s*([\d.,]+)", text)
             bet_amount = bet_match.group(1) if bet_match else "-"
 
-            # Status: procura da última linha para cima
             status_text = ""
             for l in reversed(lines):
                 if any(k in l.lower() for k in STATUS_MAP.keys()):
