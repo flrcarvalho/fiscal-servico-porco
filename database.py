@@ -37,15 +37,11 @@ def init_db():
         )
     """)
 
-    # Migrações: adiciona colunas se não existirem
-    try:
-        c.execute("ALTER TABLE licenses ADD COLUMN cf_clearance TEXT DEFAULT ''")
-    except Exception:
-        pass
-    try:
-        c.execute("ALTER TABLE licenses ADD COLUMN r365_cookie TEXT DEFAULT ''")
-    except Exception:
-        pass
+    for col in ["cf_clearance TEXT DEFAULT ''", "r365_cookie TEXT DEFAULT ''"]:
+        try:
+            c.execute(f"ALTER TABLE licenses ADD COLUMN {col}")
+        except Exception:
+            pass
 
     c.execute("""
         CREATE TABLE IF NOT EXISTS invite_codes (
@@ -67,24 +63,31 @@ def init_db():
             last_check TEXT,
             license_url TEXT DEFAULT '',
             summary_date TEXT DEFAULT '',
+            error_cooldown INTEGER DEFAULT 0,
+            goodmorning_sent INTEGER DEFAULT 0,
+            goodnight_sent INTEGER DEFAULT 0,
+            daily_incidents TEXT DEFAULT '',
             FOREIGN KEY (license_id) REFERENCES licenses(id)
         )
     """)
 
-    # Migrações monitor_state
-    try:
-        c.execute("ALTER TABLE monitor_state ADD COLUMN license_url TEXT DEFAULT ''")
-    except Exception:
-        pass
-    try:
-        c.execute("ALTER TABLE monitor_state ADD COLUMN summary_date TEXT DEFAULT ''")
-    except Exception:
-        pass
+    for col in [
+        "license_url TEXT DEFAULT ''",
+        "summary_date TEXT DEFAULT ''",
+        "error_cooldown INTEGER DEFAULT 0",
+        "goodmorning_sent INTEGER DEFAULT 0",
+        "goodnight_sent INTEGER DEFAULT 0",
+        "daily_incidents TEXT DEFAULT ''",
+    ]:
+        try:
+            c.execute(f"ALTER TABLE monitor_state ADD COLUMN {col}")
+        except Exception:
+            pass
 
     conn.commit()
     conn.close()
 
-# ── Invite codes ─────────────────────────────────────────────
+# ── Invite codes ──────────────────────────────────────────────
 
 def create_invite(n=1):
     conn = get_conn()
