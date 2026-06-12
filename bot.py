@@ -18,7 +18,6 @@ logger = logging.getLogger(__name__)
 ADMIN_ID  = os.environ.get("ADMIN_TELEGRAM_ID", "")
 BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
 
-# Estados
 AWAIT_INVITE      = 1
 AWAIT_EMAIL       = 2
 AWAIT_PASSWORD    = 3
@@ -36,7 +35,7 @@ async def _trigger_first_scan(lid: int):
 
 # ── /start ────────────────────────────────────────────────────
 async def start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    tid = str(update.effective_user.id)
+    tid  = str(update.effective_user.id)
     name = update.effective_user.first_name or "usuário"
 
     if user_exists(tid):
@@ -63,7 +62,7 @@ async def start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
 
 async def receive_invite(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    tid = str(update.effective_user.id)
+    tid  = str(update.effective_user.id)
     code = update.message.text.strip()
     if not use_invite(code, tid):
         await update.message.reply_text("❌ Código inválido ou já usado. Tente novamente:")
@@ -102,7 +101,7 @@ async def receive_password(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
 
 async def receive_label(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    tid = str(update.effective_user.id)
+    tid   = str(update.effective_user.id)
     label = update.message.text.strip()
     if label.startswith("/pular"):
         label = ctx.user_data.get("email", "")
@@ -119,9 +118,9 @@ async def receive_label(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
 
 async def skip_label(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    tid = str(update.effective_user.id)
+    tid   = str(update.effective_user.id)
     email = ctx.user_data.get("email")
-    lid = add_license(tid, email, ctx.user_data.get("password"), email)
+    lid   = add_license(tid, email, ctx.user_data.get("password"), email)
     ctx.user_data.clear()
     await update.message.reply_text(
         f"📧 *{email}* cadastrada!\n\n"
@@ -146,7 +145,7 @@ async def atualizar_cookies_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
     if len(licenses) == 1:
         ctx.user_data["cookie_license_id"] = licenses[0]["id"]
-        ctx.user_data["cookie_label"] = licenses[0]["label"]
+        ctx.user_data["cookie_label"]       = licenses[0]["label"]
         await update.message.reply_text(
             f"🍪 *Atualizar cookies — {licenses[0]['label']}*\n\n"
             f"*Como pegar os cookies:*\n"
@@ -177,11 +176,11 @@ async def cookie_lic_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if query.data == "cklic_cancel":
         await query.edit_message_text("Cancelado.")
         return ConversationHandler.END
-    lid = int(query.data.replace("cklic_", ""))
+    lid      = int(query.data.replace("cklic_", ""))
     licenses = get_licenses(str(query.from_user.id))
-    lic = next((l for l in licenses if l["id"] == lid), None)
+    lic      = next((l for l in licenses if l["id"] == lid), None)
     ctx.user_data["cookie_license_id"] = lid
-    ctx.user_data["cookie_label"] = lic["label"] if lic else str(lid)
+    ctx.user_data["cookie_label"]       = lic["label"] if lic else str(lid)
     await query.edit_message_text(
         f"🍪 *Atualizar cookies — {ctx.user_data['cookie_label']}*\n\n"
         f"*Como pegar:*\n"
@@ -206,13 +205,14 @@ async def receive_cf_cookie(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
 
 async def receive_r365_cookie(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    tid = str(update.effective_user.id)
-    lid = ctx.user_data.get("cookie_license_id")
+    tid   = str(update.effective_user.id)
+    lid   = ctx.user_data.get("cookie_license_id")
     label = ctx.user_data.get("cookie_label", "")
-    cf = ctx.user_data.get("cf_clearance", "")
-    r365 = update.message.text.strip()
+    cf    = ctx.user_data.get("cf_clearance", "")
+    r365  = update.message.text.strip()
 
     save_cookies(lid, cf, r365)
+    update_monitor_state_fn(lid, error_cooldown=0)
     ctx.user_data.clear()
 
     await update.message.reply_text(
@@ -220,9 +220,7 @@ async def receive_r365_cookie(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         f"🔍 Fazendo scan agora para confirmar...",
         parse_mode="Markdown"
     )
-
     ctx.application.create_task(_trigger_first_scan(lid))
-
     return ConversationHandler.END
 
 
@@ -287,12 +285,14 @@ async def status_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         return
     msg = "📊 *Status das licenças:*\n\n"
     for lic in licenses:
-        state = get_monitor_state(lic["id"])
-        robot = state.get("robot_status", "?")
-        last = state.get("last_check", "nunca")
-        icon = "🟢" if robot == "LIGADO" else "🔴" if robot == "DESLIGADO" else "⚪"
-        cookie_ok = "🍪" if lic.get("cf_clearance") else "⚠️ cookie ausente"
-        msg += f"{icon} *{lic['label']}* {cookie_ok}\n   Robô: {robot} | Checagem: {last}\n\n"
+        state    = get_monitor_state(lic["id"])
+        robot    = state.get("robot_status", "?")
+        last     = state.get("last_check", "nunca")
+        cooldown = int(state.get("error_cooldown", 0) or 0)
+        icon     = "🟢" if robot == "LIGADO" else "🔴" if robot == "DESLIGADO" else "⚪"
+        cookie_ok    = "🍪" if lic.get("cf_clearance") else "⚠️ cookie ausente"
+        cooldown_str = f" | ⏸️ cooldown: {cooldown}" if cooldown > 0 else ""
+        msg += f"{icon} *{lic['label']}* {cookie_ok}\n   Robô: {robot} | Checagem: {last}{cooldown_str}\n\n"
     await update.message.reply_text(msg, parse_mode="Markdown")
 
 
@@ -303,7 +303,65 @@ async def cancelar(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     return ConversationHandler.END
 
 
-# ── Admin: /gerar_convite ─────────────────────────────────────
+# ── /ok ───────────────────────────────────────────────────────
+async def ok_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    tid = str(update.effective_user.id)
+    if not user_exists(tid):
+        await update.message.reply_text("Não cadastrado.")
+        return
+    from telegram import Bot as TGBot
+    import datetime
+    from zoneinfo import ZoneInfo
+    tgbot    = TGBot(token=os.environ.get("TELEGRAM_BOT_TOKEN", ""))
+    licenses = get_licenses(tid)
+    now      = datetime.datetime.now(ZoneInfo("America/Sao_Paulo")).strftime("%d/%m - %H:%M")
+    for lic in licenses:
+        state          = get_monitor_state(lic["id"])
+        alert_msg_id   = state.get("alert_message_id")
+        summary_msg_id = state.get("summary_message_id")
+        if alert_msg_id:
+            try:
+                await tgbot.delete_message(chat_id=tid, message_id=int(alert_msg_id))
+            except Exception:
+                pass
+        if summary_msg_id:
+            try:
+                robot  = state.get("robot_status", "?")
+                r_icon = "🟢" if robot == "LIGADO" else "🔴" if robot == "DESLIGADO" else "⚪"
+                last   = state.get("last_check", now)
+                label  = lic["label"]
+                txt = (
+                    f"🐷 *Fiscal de Serviço Porco*\n"
+                    f"📋 *{label}*\n"
+                    f"Robô: {r_icon} {robot}\n"
+                    f"🕐 Atualizado: {last}\n\n"
+                    f"✅ Alerta confirmado — {now}"
+                )
+                await tgbot.edit_message_text(
+                    chat_id=tid, message_id=int(summary_msg_id),
+                    text=txt, parse_mode="Markdown"
+                )
+            except Exception:
+                pass
+        update_monitor_state_fn(lic["id"], alert_message_id=None, error_cooldown=0)
+    await update.message.reply_text("OK! Alertas resetados. Monitorando normalmente. 🐷")
+
+
+# ── /deploy_reset (admin only) ────────────────────────────────
+async def deploy_reset_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    tid = str(update.effective_user.id)
+    if tid != str(ADMIN_ID):
+        await update.message.reply_text("❌ Sem permissão.")
+        return
+    await update.message.reply_text("🔄 Iniciando reset de deploy...")
+    from telegram import Bot as TGBot
+    from monitor import deploy_reset
+    tgbot = TGBot(token=os.environ.get("TELEGRAM_BOT_TOKEN", ""))
+    await deploy_reset(tgbot)
+    await update.message.reply_text("✅ Deploy reset concluído.")
+
+
+# ── /gerar_convite (admin only) ───────────────────────────────
 async def gerar_convite(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     tid = str(update.effective_user.id)
     if tid != str(ADMIN_ID):
@@ -316,52 +374,8 @@ async def gerar_convite(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         except ValueError:
             pass
     codes = create_invite(n)
-    msg = f"🎟️ *{n} código(s) gerado(s):*\n\n" + "\n".join(f"`{c}`" for c in codes)
+    msg   = f"🎟️ *{n} código(s) gerado(s):*\n\n" + "\n".join(f"`{c}`" for c in codes)
     await update.message.reply_text(msg, parse_mode="Markdown")
-
-
-async def ok_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    tid = str(update.effective_user.id)
-    if not user_exists(tid):
-        await update.message.reply_text("Nao cadastrado.")
-        return
-    from telegram import Bot as TGBot
-    from database import get_monitor_state
-    import os, datetime
-    from zoneinfo import ZoneInfo
-    tgbot = TGBot(token=os.environ.get("TELEGRAM_BOT_TOKEN", ""))
-    licenses = get_licenses(tid)
-    now = datetime.datetime.now(ZoneInfo("America/Sao_Paulo")).strftime("%d/%m - %H:%M")
-    for lic in licenses:
-        state = get_monitor_state(lic["id"])
-        alert_msg_id = state.get("alert_message_id")
-        summary_msg_id = state.get("summary_message_id")
-        if alert_msg_id:
-            try:
-                await tgbot.delete_message(chat_id=tid, message_id=int(alert_msg_id))
-            except Exception:
-                pass
-        if summary_msg_id:
-            try:
-                robot = state.get("robot_status", "?")
-                r_icon = "\U0001f7e2" if robot == "LIGADO" else "\U0001f534" if robot == "DESLIGADO" else "\u26aa"
-                last = state.get("last_check", now)
-                label = lic["label"]
-                txt = ("\U0001f437 *Fiscal de Servi\u00e7o Porco*\n"
-                       "\U0001f4cb *" + label + "*\n"
-                       "Rob\u00f4: " + r_icon + " " + robot + "\n"
-                       "\U0001f550 Atualizado: " + last + "\n\n"
-                       "\u2705 Alerta confirmado \u2014 " + now)
-                await tgbot.edit_message_text(
-                    chat_id=tid,
-                    message_id=int(summary_msg_id),
-                    text=txt,
-                    parse_mode="Markdown"
-                )
-            except Exception:
-                pass
-        update_monitor_state_fn(lic["id"], alert_message_id=None)
-    await update.message.reply_text("OK! Alertas resetados. Monitorando normalmente. \U0001f437")
 
 
 async def unknown(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -404,6 +418,7 @@ def build_app():
     app.add_handler(CommandHandler("ok", ok_cmd))
     app.add_handler(CommandHandler("status", status_cmd))
     app.add_handler(CommandHandler("gerar_convite", gerar_convite))
+    app.add_handler(CommandHandler("deploy_reset", deploy_reset_cmd))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, unknown))
 
     return app
